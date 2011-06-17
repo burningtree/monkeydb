@@ -1,22 +1,12 @@
-var nodeio = require('node.io');
+var monkey = require('monkeydb');
 
-exports.job = new nodeio.Job({timeout: 10}, {
+exports.job = new monkey.Job({
+    run: function($, out){
 
-    init: function() {
-        this.input = this.options.args;
-    },
-    run: function(url) {
-        this.getHtml(url, function(err, $) {
-            var output = {}
-            if(err) this.exit(err);
-
-            output.name = $('h1#page-title').text;
-            output.links = [];
-            $('a.weblink-uri').each( function(a){
-                output.links.push(a.attribs.href);
-            });
-
-            this.emit(output);
+        out.name = $('h1#page-title').text;
+        out.links = [];
+        $('a.weblink-uri').each( function(a){
+            out.links.push(a.attribs.href);
         });
     }
 });

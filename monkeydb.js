@@ -1,6 +1,29 @@
 var nodeio = require('node.io');
-var MonkeyOutput = function() {};
 
+var monkeyParserExts = {
+    og: function($, value){
+
+        var params = [ 'name', 'image', 'url' ];
+        var parseItem = function(column){
+                 try { 
+                    var current = $('meta[property="og:'+column+'"]').attribs.content;
+                 } catch(err) { return null; }
+                 return current;
+              };
+
+        if(value != undefined) return parseItem(value);
+
+        var out = {}
+        params.forEach( function(c){
+            var i = parseItem(c);
+            console.log(i);
+            if(i) out[c] = i;
+        });
+        return out;
+    },
+};
+
+var MonkeyOutput = function() {};
 var MonkeyJob = function(data){
     var options = {};
     return this.init(options, data);
@@ -10,6 +33,10 @@ MonkeyJob.prototype.init = function(options, data){
 
     var nodeJob = new nodeio.Job({timeout:10}, {
         init: function() {
+                 if(this.options.args == undefined || this.options.args.length == 0){
+                    this.exit('Input argument not defined');
+                 }
+
                  this.input = this.options.args;
               },
         run: function(url) {
@@ -19,31 +46,9 @@ MonkeyJob.prototype.init = function(options, data){
                      var output = {};
 
                      $.ext = function(module, col){
-                        var modules = {
-                            og: {
-                                params: [ 'name', 'image', 'url' ],
-                                parseItem: function(column){
-                                         try { 
-                                            var current = $('meta[property="og:'+column+'"]').attribs.content;
-                                         } catch(err) { return null; }
-                                         return current;
-                                      },
-                                run: function(value){
-                                        if(value != undefined) return this.parseItem(value);
-
-                                        var out = {}, module = this;
-                                        this.params.forEach( function(c){
-                                            var i = module.parseItem(c);
-                                            console.log(i);
-                                            if(i) out[c] = i;
-                                        });
-                                        return out;
-                                     },
-                            },
-                        };
 
                         try {
-                            var parsed = modules[module].run(col);
+                            var parsed = monkeyParserExts[module]($, col);
                         } catch(err) { return err; }
 
                         return parsed;
