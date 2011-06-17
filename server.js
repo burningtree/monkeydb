@@ -1,7 +1,9 @@
 var express = require('express'),
     nodeio = require('node.io'),
     mongo = require('mongoskin'),
-    url = require('url');
+    url = require('url'),
+    jquery = require('jquery'),
+    jsdom = require('jsdom');
 
 var base_url = 'http://95.168.199.246:3000/';
 var db = mongo.db('localhost:27017/monkeydb');
@@ -35,6 +37,10 @@ Array.prototype.unique = function () {
     return r;
 }
 
+RegExp.escape = function(text) {
+    return text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+}
+
 function Monkey(obj)
 {
     obj.summary = function(){
@@ -44,11 +50,14 @@ function Monkey(obj)
             type: obj.type,
             name: obj.name,
             links: obj.uri,
+            redirects: obj.redirects,
             sources: obj.sources.map( function(source) { return { 
                             uri: source.uri, 
-                            scraper: source.scraper,
-                            status: source.status,
+                            scraper: base_url+'scrape?uri='+encodeURIComponent(source.uri),
+                            ns: source.ns,
+                            params: source.args,
                             props: source.props,
+                            status: source.status,
                             milis: source.milis,
                             updated: source.updated,
                      }; }),
@@ -63,17 +72,36 @@ function Monkey(obj)
 
 var monkeydb = {
 
-    detectTemplate: function(uri, callback){
-                   var parsed_uri = url.parse(uri);
-                    var templates = db.collection('uri_templates')
-                          .findOne({ 
-                                'domains': { '$in': [ parsed_uri.hostname ] },
-                                'protocols': { '$in': [ parsed_uri.protocol ] },
-                          }, function(err, template){
-                                if(err) { return callback(err); }
-                                callback(template);
-                          });
-               },
+    detectNamespace: function(uri, callback){
+                         var parsed_uri = url.parse(uri);
+                         if(!parsed_uri.protocol || !parsed_uri.hostname) return callback('Bad URI');
+
+                         var regexBase = new RegExp('^'+RegExp.escape(parsed_uri.protocol) + '//' + RegExp.escape(parsed_uri.hostname) +'.*');
+                         db.collection('namespaces').find({ 'uri': { $regex: regexBase }, }).toArray(function(err, arr){
+                             if(err) return callback(err);
+                             if(arr == undefined) return callback(null);
+
+                             var curns = null;
+                             arr.forEach(function(ns){
+                                 var regex = ns.uri.replace(/<([^>]+)>/g, function(val, match){
+                                     return '('+String(ns.regex[match]).replace(/^\/(.*)\/$/,"$1")+')';
+                                 });
+                                 regex = new RegExp('^'+regex+'$');
+                                 var match = uri.match(regex);
+                                 if(match){
+                                    curns = ns;
+                                    curns.compiledRegex = regex;
+                                    curns.args = {}; var i = 1;
+                                    for(prop in ns.regex){
+                                        curns.args[prop] = match[i];
+                                        i++;
+                                    }
+                                 }
+                             });
+
+                             return callback(err, curns);
+                         }); 
+                     },
     object: function(arg, callback){
 
                         // hledame ObjectId
@@ -96,8 +124,16 @@ var monkeydb = {
 
                             db.collection('objects').findOne({ 'uri': { '$in': curargs }}, function(err,row){
                                     if(err) return callback(err);
-                                    if(row == undefined) return callback('No results');
-                                    callback(err, Monkey(row));
+                                    if(row == undefined){
+                                        // try find a redirect
+                                        db.collection('objects').findOne({ 'sources.redirects': { '$in': curargs }}, function(err, subrow){
+                                            if(subrow == undefined)
+                                                return callback('No results');
+
+                                            return callback(err, Monkey(subrow));
+
+                                        });
+                                    } else { callback(err, Monkey(row)); }
                             });
                         }
                      },
@@ -160,16 +196,21 @@ var monkeydb = {
                                 names.push(s.data.name);
                         }); 
 
-
                         if(object.sources == sources)
                             return callback(null, Monkey(object));
 
+                        var redirects = object.redirects || [];
+                        source.redirects.forEach( function(r){
+                            redirects = redirects.concat(r);
+                        });
+
                         o = object;
-                        o.name = names;
+                        o.name = names[0];
                         o.sources = sources;
                         o.updated = new Date;
                         o.uri = uris.unique();
                         o.type = type;
+                        o.redirects = redirects.unique();
 
                         db.collection('objects').update({ '_id': object._id }, o, function(err) {
                             if(err)
@@ -182,11 +223,11 @@ var monkeydb = {
 
                 var scrapeStart = new Date;
 
-                this.detectTemplate(uri, function(template){
-                       if(template == undefined)
-                           return callback('Template not found');
+                this.detectNamespace(uri, function(err, ns){
+                       if(ns == undefined) return callback('Namespace for this URI not found');
+                       if(err) return callback(err);
 
-                       monkeydb.scrape(template.scraper, [ uri ], function(err, data){
+                       monkeydb.scrape(ns.scraper, [ uri ], function(err, data){
                                 if(err)
                                     return callback(err);
                                 
@@ -197,10 +238,12 @@ var monkeydb = {
                                 if(!data)
                                     return callback('no data');
 
-                                var uris = [ uri ];
+                                var myuri = (data.url || uri);
+                                var uris = [ myuri ];
                                 if(data.url && (!data.url in uris)) uris.push(data.url);
 
-                                if(template.uricols) template.uricols.forEach(function(col){
+                                var uricols = [ 'links' ];
+                                if(uricols) uricols.forEach(function(col){
                                     if(data[col] == undefined) return false;
 
                                     if(typeof(data[col]) == 'object' && data[col].constructor == Array)
@@ -213,35 +256,42 @@ var monkeydb = {
 
                                 var scrapeEnd = new Date;
 
+                                console.log('scrape: '+uri+' ['+(scrapeEnd-scrapeStart)+' ms]');
+
                                 var props = []
                                 for(var prop in data){
                                     if(data.hasOwnProperty(prop))
                                         props.push(prop);
                                 }
                                 var source = {
-                                        uri: uri,
+                                        ns: ns._id,
+                                        args: ns.args, 
+                                        uri: myuri,
                                         status: 'ok',
                                         props: props,
                                         data: {
                                             name: data.name,
-                                            type: template.type || null,
+                                            type: (data.type || ns.type || null),
                                             image: data.image,
                                             description: data.description,
                                             uri: uris,
                                         },
-                                        scraper: template.scraper,
+                                        scraper: ns.scraper,
                                         milis: (scrapeEnd-scrapeStart),
                                         updated: new Date,
+                                        redirects: (data.url != undefined && data.url != uri) ? [ uri ] : [], 
                                 };
 
                                 var object = {
                                     '_id': null,
                                     name: data.name,
-                                    type: template.type,
+                                    type: ns.type,
                                     sources: [ source ],
                                     uri: uris,
                                     created: new Date,
+                                    redirects: source.redirects,
                                 };
+
                                 callback(err, object, data, source);
 
                            }); 
@@ -262,8 +312,11 @@ var monkeydb = {
             },
 
     detect: function(uri, callback){
+
                         // first try find in database
                         this.object(uri, function(err, object) {
+
+                            console.log('detect "'+ uri +'"');
 
                             // not in database
                             if(object == undefined)
@@ -273,7 +326,7 @@ var monkeydb = {
                             }
                             // in database
                             var curtime = new Date;
-                            var timeout = 0; // (1000*3600);
+                            var timeout = 5000; // (1000*3600);
                             if(curtime-object.updated < timeout)
                                 return callback(null, object);
 
@@ -341,7 +394,7 @@ app.get('/lookup', function(req, res){
     });
 });
 
-app.get('/parse', function(req, res){
+app.get('/scrape', function(req, res){
 
     var startTime = new Date;
     var uri = req.query.uri;
