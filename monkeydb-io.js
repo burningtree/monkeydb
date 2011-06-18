@@ -52,12 +52,10 @@ MonkeyJob.prototype.init = function(options, data){
               },
         run: function(url) {
                  this.getHtml(url, function(err, $) {
-                     if(err) this.exit(err);
+                     if(err) this.emit(err);
 
-                     if($ == undefined){
-                        //return this.emit(null);
-                        return this.emit("404");
-                     }
+                     if($ == undefined)
+                        return this.emit(null);
 
                      var output = {};
 
@@ -82,7 +80,8 @@ MonkeyJob.prototype.init = function(options, data){
                      try {
                         data.run($, output, this);
                      } catch(err) { 
-                        return this.exit(err);
+                         console.log(err);
+                        return this.emit(null);
                      }
                      return this.emit(output);
                  });

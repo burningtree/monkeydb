@@ -12,6 +12,5 @@ exports.job = new monkey.Job({
 
         out.image = $.meta('og:image');
 
-        out
     }
 });

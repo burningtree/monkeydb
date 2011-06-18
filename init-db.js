@@ -84,6 +84,34 @@ db.namespaces.insert({
         scraper: 'fm.last_user',
 });
 
+db.namespaces.insert({
+	uri: 'http://www.last.fm/<type>/<id>+<coolurl>/?', 
+	type: 'Event', 
+	regex: {
+                "id": /\d+/,
+                "type": /(festival|event)/,
+		"coolurl": /[^/]+/,
+	},
+        scraper: 'fm.last_event',
+});
+
+db.namespaces.insert({
+	uri: 'http://www.myspace.com/<coolurl>/?', 
+	regex: {
+		"coolurl": /[^/]+/,
+	},
+        scraper: 'com.myspace',
+});
+
+db.namespaces.insert({
+	uri: 'http://www.psp.cz/sqw/detail.sqw\\?id=<id>', 
+	type: 'Person', 
+	regex: {
+                "id": /\d+/,
+	},
+        scraper: 'cz.psp',
+});
+
 
 
 

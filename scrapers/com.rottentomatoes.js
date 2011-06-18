@@ -16,7 +16,6 @@ exports.job = new monkey.Job({
         $('div.movie_info div.left_col p').each( function(p){
             if(p.children[0] && p.children[0].name == 'label'){
                 var type = map[p.children[0].children[0].raw];
-                console.log(type);
                 if(type != undefined)
                     output[type].push( { name: $('a', p).fulltext, url: $.base_uri+$('a',p).attribs.href } );
             }
