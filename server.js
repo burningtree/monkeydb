@@ -1,5 +1,5 @@
 var express = require('express'),
-    monkeydb = require('./monkeydb-server.js').monkeydb;
+    monkeydb = require('./monkeydb-api.js').monkeydb;
 
 var app = express.createServer();
 
